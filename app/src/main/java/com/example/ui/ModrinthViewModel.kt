@@ -81,12 +81,32 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
             1, TimeUnit.HOURS
         ).setConstraints(constraints).build()
 
-        WorkManager.getInstance(getApplication())
-            .enqueueUniquePeriodicWork(
-                "ModrinthBackgroundSync",
-                androidx.work.ExistingPeriodicWorkPolicy.KEEP,
-                periodicWorkRequest
-            )
+        try {
+            WorkManager.getInstance(getApplication())
+                .enqueueUniquePeriodicWork(
+                    "ModrinthBackgroundSync",
+                    androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                    periodicWorkRequest
+                )
+        } catch (e: IllegalStateException) {
+            Log.e(TAG, "WorkManager not initialized on first attempt, trying manual initialization", e)
+            try {
+                val config = androidx.work.Configuration.Builder()
+                    .setMinimumLoggingLevel(Log.INFO)
+                    .build()
+                WorkManager.initialize(getApplication(), config)
+                WorkManager.getInstance(getApplication())
+                    .enqueueUniquePeriodicWork(
+                        "ModrinthBackgroundSync",
+                        androidx.work.ExistingPeriodicWorkPolicy.KEEP,
+                        periodicWorkRequest
+                    )
+            } catch (ex: Exception) {
+                Log.e(TAG, "Fatal error: failed manual WorkManager initialization", ex)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Unexpected error setting up WorkManager", e)
+        }
     }
 
     fun refreshAll() {

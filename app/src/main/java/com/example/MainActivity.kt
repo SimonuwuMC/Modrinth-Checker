@@ -43,6 +43,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.example.data.ProjectEntity
 import com.example.data.UpdateNotificationEntity
 import com.example.ui.theme.*
@@ -226,8 +228,11 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
                     }
                 } else {
                     items(uiState.notifications, key = { it.id }) { notification ->
+                        val correspondingProject = uiState.projects.firstOrNull { it.slug == notification.projectSlug }
+                        val iconUrl = correspondingProject?.iconUrl
                         NotificationHistoryCard(
                             notification = notification,
+                            iconUrl = iconUrl,
                             onClick = {
                                 viewModel.markAsRead(notification.id)
                                 showChangelogDialogFor = notification
@@ -504,7 +509,7 @@ fun ProjectItemCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top
             ) {
-                MinecraftAvatar(projectSlug = project.slug)
+                ProjectLogo(iconUrl = project.iconUrl, projectSlug = project.slug, modifier = Modifier.size(44.dp))
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -676,6 +681,7 @@ fun ProjectItemCard(
 @Composable
 fun NotificationHistoryCard(
     notification: UpdateNotificationEntity,
+    iconUrl: String?,
     onClick: () -> Unit
 ) {
     Card(
@@ -712,7 +718,7 @@ fun NotificationHistoryCard(
             }
 
             // Project mini icons
-            MinecraftAvatar(projectSlug = notification.projectSlug, modifier = Modifier.size(32.dp))
+            ProjectLogo(iconUrl = iconUrl, projectSlug = notification.projectSlug, modifier = Modifier.size(32.dp))
             Spacer(modifier = Modifier.width(12.dp))
 
             Column(modifier = Modifier.weight(1f)) {
@@ -758,6 +764,26 @@ fun NotificationHistoryCard(
                 modifier = Modifier.size(16.dp)
             )
         }
+    }
+}
+
+@Composable
+fun ProjectLogo(iconUrl: String?, projectSlug: String, modifier: Modifier = Modifier) {
+    if (!iconUrl.isNullOrEmpty()) {
+        SubcomposeAsyncImage(
+            model = iconUrl,
+            contentDescription = "Logo de $projectSlug",
+            modifier = modifier,
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            loading = {
+                MinecraftAvatar(projectSlug = projectSlug, modifier = Modifier.fillMaxSize())
+            },
+            error = {
+                MinecraftAvatar(projectSlug = projectSlug, modifier = Modifier.fillMaxSize())
+            }
+        )
+    } else {
+        MinecraftAvatar(projectSlug = projectSlug, modifier = modifier)
     }
 }
 
