@@ -34,7 +34,7 @@ interface ModrinthApiService {
                 .addInterceptor { chain ->
                     val original = chain.request()
                     val request = original.newBuilder()
-                        .header("User-Agent", "simonuwu-modrinth-notifier/1.0.0 (desousasimon023@gmail.com)")
+                        .header("User-Agent", "simonuwu-modrinth-notifier/1.0.0 (contact@simonuwu.com)")
                         .method(original.method, original.body)
                         .build()
                     chain.proceed(request)

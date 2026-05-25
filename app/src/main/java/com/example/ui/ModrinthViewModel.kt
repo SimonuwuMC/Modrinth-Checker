@@ -27,21 +27,30 @@ data class ModrinthUiState(
     val notifications: List<UpdateNotificationEntity> = emptyList(),
     val isRefreshing: Boolean = false,
     val errorMessage: String? = null,
-    val successMessage: String? = null
+    val successMessage: String? = null,
+    val username: String = "Usuario"
 )
 
 class ModrinthViewModel(application: Application) : AndroidViewModel(application) {
     private val TAG = "ModrinthViewModel"
     private val CHANNEL_ID = "modrinth_updates_channel"
+    private val PREFS_NAME = "modrinth_prefs"
+    private val KEY_USERNAME = "username"
 
     private val database = AppDatabase.getDatabase(application)
     private val apiService = ModrinthApiService.create()
     private val repository = ModrinthRepository(apiService, database.modrinthDao())
 
+    private val sharedPrefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
     private val _uiState = MutableStateFlow(ModrinthUiState())
     val uiState: StateFlow<ModrinthUiState> = _uiState.asStateFlow()
 
     init {
+        // Load initial username from preferences
+        val initialUsername = sharedPrefs.getString(KEY_USERNAME, "Usuario") ?: "Usuario"
+        _uiState.update { it.copy(username = initialUsername) }
+
         // Collect local database flows
         viewModelScope.launch {
             repository.allProjects.collect { projectsList ->
@@ -88,8 +97,8 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
                     androidx.work.ExistingPeriodicWorkPolicy.KEEP,
                     periodicWorkRequest
                 )
-        } catch (e: IllegalStateException) {
-            Log.e(TAG, "WorkManager not initialized on first attempt, trying manual initialization", e)
+        } catch (e: Throwable) {
+            Log.e(TAG, "WorkManager setup or initialization failed, attempting manual configuration", e)
             try {
                 val config = androidx.work.Configuration.Builder()
                     .setMinimumLoggingLevel(Log.INFO)
@@ -101,11 +110,9 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
                         androidx.work.ExistingPeriodicWorkPolicy.KEEP,
                         periodicWorkRequest
                     )
-            } catch (ex: Exception) {
-                Log.e(TAG, "Fatal error: failed manual WorkManager initialization", ex)
+            } catch (ex: Throwable) {
+                Log.e(TAG, "Complete fail-safe: WorkManager couldn't be initialized", ex)
             }
-        } catch (e: Exception) {
-            Log.e(TAG, "Unexpected error setting up WorkManager", e)
         }
     }
 
@@ -248,6 +255,14 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
             _uiState.update { 
                 it.copy(successMessage = "¡Actualización simulada para ${project.title}! Revisa las notificaciones del sistema.")
             }
+        }
+    }
+
+    fun updateUsername(newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isNotEmpty()) {
+            sharedPrefs.edit().putString(KEY_USERNAME, trimmed).apply()
+            _uiState.update { it.copy(username = trimmed) }
         }
     }
 

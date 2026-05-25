@@ -50,6 +50,7 @@ import com.example.data.UpdateNotificationEntity
 import com.example.ui.theme.*
 import com.example.ui.ModrinthUiState
 import com.example.ui.ModrinthViewModel
+import com.example.ui.MarkdownRenderer
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.absoluteValue
@@ -132,6 +133,8 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
         ) {
             // App Header
             AppHeader(
+                username = uiState.username,
+                onUpdateUsername = { viewModel.updateUsername(it) },
                 onRefreshAll = { viewModel.refreshAll() },
                 isRefreshing = uiState.isRefreshing,
                 onAddProjectClick = { showAddDialog = true }
@@ -266,11 +269,14 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
 
 @Composable
 fun AppHeader(
+    username: String,
+    onUpdateUsername: (String) -> Unit,
     onRefreshAll: () -> Unit,
     isRefreshing: Boolean,
     onAddProjectClick: () -> Unit
 ) {
     val rotationAngle = remember { Animatable(0f) }
+    var showEditNameDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(isRefreshing) {
         if (isRefreshing) {
@@ -389,33 +395,88 @@ fun AppHeader(
             // Metadata Row: UTC Clock and Account
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showEditNameDialog = true }
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .testTag("edit_username_trigger")
+                ) {
                     Icon(
-                        imageVector = Icons.Default.DateRange,
-                        contentDescription = null,
-                        tint = VibrantTextSecondary,
-                        modifier = Modifier.size(14.dp)
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Editar nombre de usuario",
+                        tint = VibrantBlueText,
+                        modifier = Modifier.size(12.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Text(
-                        text = "UTC: 2026-05-25 10:31:00",
+                        text = username,
                         fontSize = 11.sp,
-                        color = VibrantTextSecondary,
-                        fontFamily = FontFamily.Monospace
+                        color = VibrantBlueText,
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
-
-                Text(
-                    text = "desousasimon023",
-                    fontSize = 11.sp,
-                    color = VibrantBlueText,
-                    fontWeight = FontWeight.SemiBold
-                )
             }
         }
+    }
+
+    if (showEditNameDialog) {
+        var tempName by remember { mutableStateOf(username) }
+        AlertDialog(
+            onDismissRequest = { showEditNameDialog = false },
+            title = {
+                Text(
+                    text = "Editar Nombre de Usuario",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = VibrantTextPrimary
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = tempName,
+                    onValueChange = { tempName = it },
+                    label = { Text("Nombre de usuario") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("username_input_field"),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = VibrantBlueText,
+                        focusedLabelColor = VibrantBlueText,
+                        cursorColor = VibrantBlueText
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (tempName.trim().isNotEmpty()) {
+                            onUpdateUsername(tempName.trim())
+                            showEditNameDialog = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = VibrantBlueText),
+                    modifier = Modifier.testTag("save_username_button")
+                ) {
+                    Text("Guardar", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showEditNameDialog = false },
+                    modifier = Modifier.testTag("cancel_username_button")
+                ) {
+                    Text("Cancelar", color = VibrantTextSecondary)
+                }
+            },
+            containerColor = Color.White,
+            shape = RoundedCornerShape(20.dp)
+        )
     }
 }
 
@@ -770,18 +831,22 @@ fun NotificationHistoryCard(
 @Composable
 fun ProjectLogo(iconUrl: String?, projectSlug: String, modifier: Modifier = Modifier) {
     if (!iconUrl.isNullOrEmpty()) {
-        SubcomposeAsyncImage(
-            model = iconUrl,
-            contentDescription = "Logo de $projectSlug",
+        val painter = coil.compose.rememberAsyncImagePainter(model = iconUrl)
+        val state = painter.state
+        Box(
             modifier = modifier,
-            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            loading = {
-                MinecraftAvatar(projectSlug = projectSlug, modifier = Modifier.fillMaxSize())
-            },
-            error = {
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.Image(
+                painter = painter,
+                contentDescription = "Logo de $projectSlug",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+            )
+            if (state is coil.compose.AsyncImagePainter.State.Loading || state is coil.compose.AsyncImagePainter.State.Error) {
                 MinecraftAvatar(projectSlug = projectSlug, modifier = Modifier.fillMaxSize())
             }
-        )
+        }
     } else {
         MinecraftAvatar(projectSlug = projectSlug, modifier = modifier)
     }
@@ -1145,12 +1210,9 @@ fun VersionChangelogDialog(
                                     color = VibrantTextSecondary
                                 )
                             } else {
-                                Text(
-                                    text = changelogText,
-                                    fontSize = 12.sp,
-                                    color = VibrantTextPrimary,
-                                    fontFamily = FontFamily.SansSerif,
-                                    lineHeight = 16.sp
+                                MarkdownRenderer(
+                                    markdown = changelogText,
+                                    primaryColor = VibrantBlueText
                                 )
                             }
                         }
