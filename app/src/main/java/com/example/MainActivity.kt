@@ -1026,11 +1026,6 @@ fun EmptyNotificationsState() {
                 color = VibrantTextPrimary,
                 fontWeight = FontWeight.Bold
             )
-            Text(
-                text = "Toca 'Simular v+' en un proyecto para ver cómo funciona.",
-                fontSize = 11.sp,
-                color = VibrantTextSecondary
-            )
         }
     }
 }
@@ -2357,3 +2352,4 @@ fun formatPublishDate(dateStr: String?): String {
         dateStr
     }
 }
+
