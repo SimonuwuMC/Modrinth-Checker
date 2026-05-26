@@ -1,5 +1,5 @@
 {
-  "name": "Simonuwu Modrinth Checker",
+  "name": "Simonuwu Modrinth",
   "description": "Monitorea y recibe notificaciones de nuevas versiones de Simonuwu Fabric Project en Modrinth.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]

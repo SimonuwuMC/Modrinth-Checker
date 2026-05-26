@@ -2,12 +2,15 @@ package com.example
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import kotlinx.coroutines.launch
+import com.example.ui.FileDownloader
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -44,9 +48,18 @@ import androidx.compose.ui.window.Dialog
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import android.net.Uri
+import android.provider.DocumentsContract
+import android.database.Cursor
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.ManagedActivityResultLauncher
 import coil.compose.SubcomposeAsyncImage
 import com.example.data.ProjectEntity
 import com.example.data.UpdateNotificationEntity
+import com.example.data.VersionFile
+import com.example.data.VersionResponse
+import com.example.data.SearchHit
+import kotlinx.coroutines.delay
 import com.example.ui.theme.*
 import com.example.ui.ModrinthUiState
 import com.example.ui.ModrinthViewModel
@@ -77,6 +90,24 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
 
     var showAddDialog by remember { mutableStateOf(false) }
     var showChangelogDialogFor by remember { mutableStateOf<UpdateNotificationEntity?>(null) }
+    var showDownloadDialogFor by remember { mutableStateOf<ProjectEntity?>(null) }
+
+    val folderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val contentResolver = context.contentResolver
+                val takeFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                contentResolver.takePersistableUriPermission(uri, takeFlags)
+                
+                val name = getFolderDisplayName(context, uri)
+                viewModel.saveFolder(uri.toString(), name)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Error securing folder permission", e)
+            }
+        }
+    }
     var notificationPermissionGranted by remember {
         mutableStateOf(
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -175,12 +206,12 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
                         EmptyTrackedState()
                     }
                 } else {
-                    items(uiState.projects, key = { it.slug }) { project ->
+                    items(uiState.projects, key = { project -> project.id }) { project ->
                         ProjectItemCard(
                             project = project,
                             onRefresh = { viewModel.refreshAll() },
                             onDelete = { viewModel.deleteProject(project.slug) },
-                            onSimulate = { viewModel.simulateVersionUpdate(project.slug) }
+                            onDownload = { showDownloadDialogFor = project }
                         )
                     }
                 }
@@ -247,14 +278,18 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
         }
     }
 
-    // Dialog for adding a custom project
+    // Dialog for searching / adding / downloading a custom project
     if (showAddDialog) {
-        AddProjectDialog(
+        ModrinthSearchDialog(
             onDismiss = { showAddDialog = false },
-            onAdd = { slug ->
+            onAddProject = { slug ->
                 viewModel.addProject(slug)
-                showAddDialog = false
-            }
+            },
+            onDownloadProject = { tempProject ->
+                showDownloadDialogFor = tempProject
+            },
+            trackedProjects = uiState.projects,
+            viewModel = viewModel
         )
     }
 
@@ -263,6 +298,16 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
         VersionChangelogDialog(
             notification = notification,
             onDismiss = { showChangelogDialogFor = null }
+        )
+    }
+
+    // Dialog for downloading files locally to a selected directory
+    showDownloadDialogFor?.let { project ->
+        DownloadFileDialog(
+            project = project,
+            viewModel = viewModel,
+            folderPickerLauncher = folderPickerLauncher,
+            onDismiss = { showDownloadDialogFor = null }
         )
     }
 }
@@ -296,7 +341,7 @@ fun AppHeader(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
         shape = RoundedCornerShape(24.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
         elevation = CardDefaults.cardElevation(2.dp)
@@ -381,7 +426,7 @@ fun AppHeader(
                         Icon(
                             imageVector = Icons.Default.Add,
                             contentDescription = "Agregar proyecto",
-                            tint = Color.White,
+                            tint = Color.Black,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -448,7 +493,11 @@ fun AppHeader(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = VibrantBlueText,
                         focusedLabelColor = VibrantBlueText,
-                        cursorColor = VibrantBlueText
+                        cursorColor = VibrantBlueText,
+                        focusedTextColor = VibrantTextPrimary,
+                        unfocusedTextColor = VibrantTextPrimary,
+                        unfocusedLabelColor = VibrantTextSecondary,
+                        unfocusedBorderColor = VibrantGrayBorder
                     )
                 )
             },
@@ -463,7 +512,7 @@ fun AppHeader(
                     colors = ButtonDefaults.buttonColors(containerColor = VibrantBlueText),
                     modifier = Modifier.testTag("save_username_button")
                 ) {
-                    Text("Guardar", color = Color.White)
+                    Text("Guardar", color = Color.Black)
                 }
             },
             dismissButton = {
@@ -474,7 +523,7 @@ fun AppHeader(
                     Text("Cancelar", color = VibrantTextSecondary)
                 }
             },
-            containerColor = Color.White,
+            containerColor = VibrantNeutralCard,
             shape = RoundedCornerShape(20.dp)
         )
     }
@@ -539,10 +588,10 @@ fun ProjectItemCard(
     project: ProjectEntity,
     onRefresh: () -> Unit,
     onDelete: () -> Unit,
-    onSimulate: () -> Unit
+    onDownload: () -> Unit
 ) {
     val isCoreProject = project.slug.contains("simonuwu")
-    val cardBg = if (isCoreProject) VibrantBlueContainer else Color.White
+    val cardBg = if (isCoreProject) VibrantBlueContainer else VibrantNeutralCard
     val titleColor = if (isCoreProject) VibrantBlueText else VibrantTextPrimary
     val idColor = if (isCoreProject) VibrantBlueText.copy(alpha = 0.6f) else VibrantTextSecondary.copy(alpha = 0.7f)
     val descColor = if (isCoreProject) VibrantBlueText.copy(alpha = 0.8f) else VibrantTextSecondary
@@ -680,24 +729,25 @@ fun ProjectItemCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Developer Simulation Beaker Trigger
+                    // Launcher local downloads trigger
                     TextButton(
-                        onClick = onSimulate,
+                        onClick = onDownload,
                         colors = ButtonDefaults.textButtonColors(
                             containerColor = if (isCoreProject) VibrantBlueText else VibrantBlueContainer
                         ),
                         shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.testTag("download_button_${project.slug}")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.PlayArrow,
+                            imageVector = Icons.Default.Share,
                             contentDescription = null,
                             tint = if (isCoreProject) Color.White else VibrantBlueText,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Simular v+",
+                            text = "Descargar",
                             color = if (isCoreProject) Color.White else VibrantBlueText,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
@@ -750,7 +800,7 @@ fun NotificationHistoryCard(
             .fillMaxWidth()
             .clickable { onClick() }
             .testTag("notification_card_${notification.id}"),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
         shape = RoundedCornerShape(20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
         elevation = CardDefaults.cardElevation(1.dp)
@@ -915,7 +965,7 @@ fun MinecraftAvatar(projectSlug: String, modifier: Modifier = Modifier) {
 fun EmptyTrackedState() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
         shape = RoundedCornerShape(20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
         elevation = CardDefaults.cardElevation(1.dp)
@@ -952,7 +1002,7 @@ fun EmptyTrackedState() {
 fun EmptyNotificationsState() {
     Card(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
+        colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
         shape = RoundedCornerShape(20.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
         elevation = CardDefaults.cardElevation(1.dp)
@@ -987,79 +1037,294 @@ fun EmptyNotificationsState() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddProjectDialog(
+fun ModrinthSearchDialog(
     onDismiss: () -> Unit,
-    onAdd: (String) -> Unit
+    onAddProject: (String) -> Unit,
+    onDownloadProject: (ProjectEntity) -> Unit,
+    trackedProjects: List<ProjectEntity>,
+    viewModel: ModrinthViewModel
 ) {
-    var slugText by remember { mutableStateOf("") }
-    
+    var searchQuery by remember { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<SearchHit>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
+
+    LaunchedEffect(searchQuery) {
+        if (searchQuery.isBlank()) {
+            results = emptyList()
+            return@LaunchedEffect
+        }
+        delay(500)
+        isSearching = true
+        results = viewModel.searchProjects(searchQuery)
+        isSearching = false
+    }
+
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
             shape = RoundedCornerShape(24.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp)
+                .fillMaxHeight(0.85f)
+                .padding(4.dp)
         ) {
             Column(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.Start
+                    .fillMaxSize()
+                    .padding(16.dp)
             ) {
                 Text(
-                    text = "Añadir Proyecto Modrinth",
+                    text = "Buscador Modrinth",
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
-                    color = VibrantTextPrimary
+                    color = VibrantBlueText
                 )
-                Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Ingresa el slug unívoco del mod (ej. sodium, iris, o un custom Simonuwu).",
-                    fontSize = 12.sp,
-                    color = VibrantTextSecondary
+                    text = "Busca, agrega o descarga cualquier mod de Modrinth directamente sin agregarlo.",
+                    fontSize = 11.sp,
+                    color = VibrantTextSecondary,
+                    modifier = Modifier.padding(bottom = 12.dp)
                 )
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
+
                 OutlinedTextField(
-                    value = slugText,
-                    onValueChange = { slugText = it },
-                    label = { Text("Slug del Proyecto") },
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Escribe para buscar... (ej. sodium, iris)", fontSize = 12.sp, color = VibrantTextSecondary) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = VibrantTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Limpiar",
+                                    tint = VibrantTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = VibrantBlueText,
                         unfocusedBorderColor = VibrantGrayBorder,
-                        focusedLabelColor = VibrantBlueText,
-                        unfocusedLabelColor = VibrantTextSecondary,
                         focusedTextColor = VibrantTextPrimary,
                         unfocusedTextColor = VibrantTextPrimary,
                         focusedContainerColor = VibrantBg,
-                        unfocusedContainerColor = Color.Transparent
+                        unfocusedContainerColor = VibrantBg,
+                        focusedLabelColor = VibrantBlueText,
+                        unfocusedLabelColor = VibrantTextSecondary
                     ),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .testTag("add_project_textfield"),
-                    singleLine = true
+                        .testTag("modrinth_search_textfield"),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
                 )
-                
-                Spacer(modifier = Modifier.height(20.dp))
-                
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                if (isSearching) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = VibrantBlueText)
+                    }
+                } else if (results.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = if (searchQuery.isBlank()) "Ingresa un término para empezar a buscar." else "No se encontraron resultados para \"$searchQuery\"",
+                            fontSize = 12.sp,
+                            color = VibrantTextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        itemsIndexed(results, key = { index, hit -> "${hit.projectId}_$index" }) { index, hit ->
+                            val isAdded = trackedProjects.any { it.slug == hit.slug || it.id == hit.projectId }
+                            SearchHitItem(
+                                hit = hit,
+                                isAdded = isAdded,
+                                onAdd = {
+                                    onAddProject(hit.slug)
+                                },
+                                onDownload = {
+                                    val tempProject = ProjectEntity(
+                                        id = hit.projectId,
+                                        slug = hit.slug,
+                                        title = hit.title,
+                                        description = hit.description ?: "",
+                                        iconUrl = hit.iconUrl,
+                                        downloads = hit.downloads ?: 0
+                                    )
+                                    onDownloadProject(tempProject)
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.End
                 ) {
                     TextButton(onClick = onDismiss) {
-                        Text("Cancelar", color = VibrantTextSecondary, fontWeight = FontWeight.SemiBold)
+                        Text("Cerrar", color = VibrantBlueText, fontWeight = FontWeight.Bold)
                     }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Button(
-                        onClick = { onAdd(slugText) },
-                        colors = ButtonDefaults.buttonColors(containerColor = VibrantBlueText),
-                        shape = RoundedCornerShape(12.dp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SearchHitItem(
+    hit: SearchHit,
+    isAdded: Boolean,
+    onAdd: () -> Unit,
+    onDownload: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = VibrantBg),
+        shape = RoundedCornerShape(16.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ProjectLogo(
+                    iconUrl = hit.iconUrl,
+                    projectSlug = hit.slug,
+                    modifier = Modifier.size(40.dp)
+                )
+                
+                Spacer(modifier = Modifier.width(10.dp))
+                
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Text("Agregar", color = Color.White)
+                        Text(
+                            text = hit.title,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp,
+                            color = VibrantTextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        
+                        val typeBadge = hit.projectType ?: "mod"
+                        Surface(
+                            color = VibrantBlueText.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(4.dp)
+                        ) {
+                            Text(
+                                text = typeBadge.uppercase(),
+                                color = VibrantBlueText,
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
                     }
+                    
+                    Text(
+                        text = "por ${hit.author ?: "Desconocido"} • ${formatQuantity(hit.downloads ?: 0)} descargas",
+                        fontSize = 10.sp,
+                        color = VibrantTextSecondary
+                    )
+                }
+            }
+            
+            if (!hit.description.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = hit.description,
+                    fontSize = 11.sp,
+                    color = VibrantTextSecondary,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            
+            Spacer(modifier = Modifier.height(10.dp))
+            
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onDownload,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(VibrantBlueText.copy(alpha = 0.12f), CircleShape)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ArrowDropDown,
+                        contentDescription = "Descargar sin agregar",
+                        tint = VibrantBlueText,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+                Text(
+                    text = "Descargar",
+                    fontSize = 11.sp,
+                    color = VibrantBlueText,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier
+                        .clickable { onDownload() }
+                        .padding(start = 6.dp, end = 16.dp)
+                )
+                
+                Button(
+                    onClick = onAdd,
+                    enabled = !isAdded,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isAdded) VibrantGrayBorder else VibrantBlueText,
+                        contentColor = if (isAdded) VibrantTextSecondary else Color.Black
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.height(28.dp)
+                ) {
+                    Text(
+                        text = if (isAdded) "Agregado" else "Agregar",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -1073,7 +1338,7 @@ fun VersionChangelogDialog(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Card(
-            colors = CardDefaults.cardColors(containerColor = Color.White),
+            colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
             shape = RoundedCornerShape(24.dp),
             border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
             modifier = Modifier
@@ -1126,7 +1391,7 @@ fun VersionChangelogDialog(
 
                 // Information Board
                 Card(
-                    colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
+                    colors = CardDefaults.cardColors(containerColor = VibrantBg),
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -1148,9 +1413,9 @@ fun VersionChangelogDialog(
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = when (notification.releaseType) {
-                                        "release" -> Color(0xFF047857)
-                                        "beta" -> Color(0xFFB45309)
-                                        else -> Color(0xFFB91C1C)
+                                        "release" -> Color(0xFF10B981)
+                                        "beta" -> Color(0xFFF59E0B)
+                                        else -> Color(0xFFEF4444)
                                     }
                                 )
                             }
@@ -1197,7 +1462,7 @@ fun VersionChangelogDialog(
                         .fillMaxWidth()
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(VibrantNeutralCard)
+                        .background(VibrantBg)
                         .padding(12.dp)
                 ) {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
@@ -1226,7 +1491,7 @@ fun VersionChangelogDialog(
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text("De acuerdo", color = Color.White)
+                    Text("De acuerdo", color = Color.Black)
                 }
             }
         }
@@ -1259,5 +1524,836 @@ fun formatRelativeTime(timestamp: Long): String {
         hours < 24 -> "Hace $hours horas"
         days == 1L -> "Ayer"
         else -> "Hace $days días"
+    }
+}
+
+// Helper to extract a friendly visual display name for the user-selected SAF Uri directory
+fun getFolderDisplayName(context: Context, uri: Uri): String {
+    var displayName: String? = null
+    try {
+        if (uri.scheme == "content") {
+            val documentId = if (DocumentsContract.isDocumentUri(context, uri)) {
+                DocumentsContract.getDocumentId(uri)
+            } else {
+                DocumentsContract.getTreeDocumentId(uri)
+            }
+            val documentUri = if (DocumentsContract.isDocumentUri(context, uri)) {
+                uri
+            } else {
+                DocumentsContract.buildDocumentUriUsingTree(uri, documentId)
+            }
+            context.contentResolver.query(
+                documentUri,
+                arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val index = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+                    if (index != -1) {
+                        displayName = cursor.getString(index)
+                    }
+                }
+            }
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("MainActivity", "Error querying folder display name", e)
+    }
+    if (displayName.isNullOrBlank()) {
+        displayName = uri.lastPathSegment ?: "Carpeta elegida"
+    }
+    return displayName
+}
+
+@Composable
+fun DownloadFileDialog(
+    project: ProjectEntity,
+    viewModel: ModrinthViewModel,
+    folderPickerLauncher: ManagedActivityResultLauncher<Uri?, Uri?>,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    
+    var allVersions by remember { mutableStateOf<List<VersionResponse>?>(null) }
+    var selectedVersion by remember { mutableStateOf<VersionResponse?>(null) }
+    var isLoadingVersions by remember { mutableStateOf(true) }
+    
+    var filesList by remember { mutableStateOf<List<VersionFile>?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
+    var isCustomMode by remember { mutableStateOf(false) }
+    var customUrl by remember { mutableStateOf("") }
+    var customFilename by remember { mutableStateOf("") }
+    
+    var selectedFileIndex by remember { mutableStateOf(0) }
+    
+    var isDownloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableStateOf(0) }
+    var statusText by remember { mutableStateOf<String?>(null) }
+    
+    var showVersionSelectorDialog by remember { mutableStateOf(false) }
+
+    val savedFolderUri = viewModel.getSavedFolderUri()
+    val savedFolderName = viewModel.getSavedFolderName() ?: "Descargas (Carpeta estándar de Android)"
+
+    // Load available versions from Modrinth API in the background
+    LaunchedEffect(project.slug) {
+        isLoadingVersions = true
+        errorMessage = null
+        try {
+            val result = viewModel.fetchAllVersions(project.slug)
+            allVersions = result
+            val latest = result.firstOrNull()
+            selectedVersion = latest
+            filesList = latest?.files ?: emptyList()
+            if (filesList.isNullOrEmpty()) {
+                isCustomMode = true
+                customFilename = "${project.slug}.jar"
+                customUrl = "https://api.modrinth.com/v2/project/${project.slug}/version"
+            } else {
+                selectedFileIndex = 0
+                isCustomMode = false
+            }
+        } catch (e: Exception) {
+            errorMessage = "No se pudieron obtener las versiones: ${e.message}"
+            isCustomMode = true
+            customFilename = "${project.slug}.jar"
+            customUrl = ""
+        } finally {
+            isLoadingVersions = false
+        }
+    }
+
+    Dialog(onDismissRequest = { if (!isDownloading) onDismiss() }) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
+            shape = RoundedCornerShape(24.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text(
+                    text = "Descargador de Archivos",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = VibrantBlueText
+                )
+                Text(
+                    text = project.title,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp,
+                    color = VibrantTextPrimary
+                )
+                
+                Spacer(modifier = Modifier.height(14.dp))
+                
+                // --- VERSION SELECTION DISPLAY ---
+                Text(
+                    text = "VERSIÓN DEL PROYECTO",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = VibrantTextSecondary,
+                        letterSpacing = 1.sp
+                    )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Surface(
+                    color = VibrantBg,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, VibrantGrayBorder),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = !isLoadingVersions && !allVersions.isNullOrEmpty()) {
+                            showVersionSelectorDialog = true
+                        }
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            if (isLoadingVersions) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(
+                                        color = VibrantBlueText,
+                                        modifier = Modifier.size(12.dp),
+                                        strokeWidth = 1.5.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text("Buscando versiones...", fontSize = 11.sp, color = VibrantTextSecondary)
+                                }
+                            } else if (selectedVersion != null) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = selectedVersion?.name ?: "",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = VibrantTextPrimary,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, fill = false)
+                                    )
+                                    val badgeColor = when (selectedVersion?.versionType?.lowercase()) {
+                                        "release" -> Color(0xFF10B981)
+                                        "beta" -> Color(0xFFF59E0B)
+                                        "alpha" -> Color(0xFFEF4444)
+                                        else -> VibrantTextSecondary
+                                    }
+                                    Surface(
+                                        color = badgeColor.copy(alpha = 0.15f),
+                                        shape = RoundedCornerShape(4.dp)
+                                    ) {
+                                        Text(
+                                            text = (selectedVersion?.versionType ?: "release").uppercase(),
+                                            color = badgeColor,
+                                            fontSize = 8.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = "Versión: v${selectedVersion?.versionNumber ?: ""} • MC: ${selectedVersion?.gameVersions?.take(2)?.joinToString(", ") ?: ""}",
+                                    fontSize = 10.sp,
+                                    color = VibrantTextSecondary
+                                )
+                            } else {
+                                Text("No se encontraron versiones de Modrinth", fontSize = 12.sp, color = VibrantCoralText)
+                            }
+                        }
+                        
+                        if (!isLoadingVersions && !allVersions.isNullOrEmpty()) {
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = "Cambiar versión",
+                                tint = VibrantBlueText,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(14.dp))
+                
+                Text(
+                    text = "CONTENEDOR (CARPETA DESTINO)",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = VibrantTextSecondary,
+                        letterSpacing = 1.sp
+                    )
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                
+                Surface(
+                    color = VibrantBg,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, VibrantGrayBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Carpeta seleccionada:",
+                                    fontSize = 10.sp,
+                                    color = VibrantTextSecondary
+                                )
+                                Text(
+                                    text = savedFolderName,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = VibrantTextPrimary,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            
+                            IconButton(
+                                onClick = { folderPickerLauncher.launch(null) },
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .background(VibrantBlueContainer, CircleShape)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Edit,
+                                    contentDescription = "Elegir carpeta",
+                                    tint = VibrantBlueText,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                        
+                        if (savedFolderUri != null) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            TextButton(
+                                onClick = { viewModel.clearSavedFolder() },
+                                colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFC2410C)),
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Restablecer a Descargas del sistema", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(14.dp))
+                
+                Text(
+                    text = "SELECCIÓN DE ARCHIVOS",
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontWeight = FontWeight.Bold,
+                        color = VibrantTextSecondary,
+                        letterSpacing = 1.sp
+                    )
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { isCustomMode = false },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!isCustomMode) VibrantBlueContainer else VibrantBg,
+                            contentColor = if (!isCustomMode) VibrantBlueText else VibrantTextSecondary
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        Text("Modrinth Releases", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Button(
+                        onClick = { isCustomMode = true },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isCustomMode) VibrantBlueContainer else VibrantBg,
+                            contentColor = if (isCustomMode) VibrantBlueText else VibrantTextSecondary
+                        ),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        Text("Personalizado", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                if (!isCustomMode) {
+                    if (isLoadingVersions) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(80.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator(color = VibrantBlueText, modifier = Modifier.size(24.dp))
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text("Buscando archivos...", fontSize = 11.sp, color = VibrantTextSecondary)
+                            }
+                        }
+                    } else if (!filesList.isNullOrEmpty()) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            filesList?.forEachIndexed { index, file ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { selectedFileIndex = index }
+                                        .background(if (selectedFileIndex == index) VibrantBlueContainer.copy(alpha = 0.5f) else Color.Transparent)
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    RadioButton(
+                                        selected = selectedFileIndex == index,
+                                        onClick = { selectedFileIndex = index },
+                                        colors = RadioButtonDefaults.colors(selectedColor = VibrantBlueText)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Column {
+                                        Text(
+                                            text = file.filename,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (selectedFileIndex == index) FontWeight.Bold else FontWeight.Normal,
+                                            color = VibrantTextPrimary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        val fileSizeInMb = (file.size ?: 0).toFloat() / (1024 * 1024)
+                                        val suffix = if (file.primary == true) " • Primario" else ""
+                                        Text(
+                                            text = "${String.format("%.2f", fileSizeInMb)} MB$suffix",
+                                            fontSize = 10.sp,
+                                            color = VibrantTextSecondary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = "No se encontraron descargas oficiales directas disponibles para esta versión/proyecto. Ingresa una URL en la pestaña Personalizado.",
+                            fontSize = 11.sp,
+                            color = Color(0xFFC2410C),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = customFilename,
+                            onValueChange = { customFilename = it },
+                            label = { Text("Nombre del Archivo (ej. sodium.jar o config.mrpack)", fontSize = 11.sp) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = VibrantBlueText,
+                                unfocusedBorderColor = VibrantGrayBorder,
+                                focusedLabelColor = VibrantBlueText,
+                                unfocusedLabelColor = VibrantTextSecondary,
+                                focusedTextColor = VibrantTextPrimary,
+                                unfocusedTextColor = VibrantTextPrimary
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = customUrl,
+                            onValueChange = { customUrl = it },
+                            label = { Text("URL de Descarga Directa", fontSize = 11.sp) },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = VibrantBlueText,
+                                unfocusedBorderColor = VibrantGrayBorder,
+                                focusedLabelColor = VibrantBlueText,
+                                unfocusedLabelColor = VibrantTextSecondary,
+                                focusedTextColor = VibrantTextPrimary,
+                                unfocusedTextColor = VibrantTextPrimary
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+                
+                if (statusText != null) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = statusText ?: "",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (statusText?.contains("Error") == true) Color(0xFFC2410C) else VibrantBlueText,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (isDownloading) {
+                                Text(
+                                    text = "$downloadProgress%",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = VibrantBlueText
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        LinearProgressIndicator(
+                            progress = downloadProgress.toFloat() / 100f,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp)),
+                            color = VibrantBlueText,
+                            trackColor = VibrantBlueContainer
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(
+                        onClick = onDismiss,
+                        enabled = !isDownloading
+                    ) {
+                        Text("Cancelar", color = VibrantTextSecondary, fontWeight = FontWeight.SemiBold)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            coroutineScope.launch {
+                                try {
+                                    isDownloading = true
+                                    downloadProgress = 0
+                                    statusText = "Conectando al servidor..."
+
+                                    val urlToDownload = if (isCustomMode) customUrl else {
+                                        filesList?.getOrNull(selectedFileIndex)?.url ?: ""
+                                    }
+                                    val nameToDownload = if (isCustomMode) customFilename else {
+                                        filesList?.getOrNull(selectedFileIndex)?.filename ?: "${project.slug}.jar"
+                                    }
+
+                                    if (urlToDownload.isBlank() || nameToDownload.isBlank()) {
+                                        statusText = "Error: Nombre de archivo o URL vacíos"
+                                        isDownloading = false
+                                        return@launch
+                                    }
+
+                                    statusText = "Descargando: $nameToDownload"
+                                    
+                                    val result = FileDownloader.download(
+                                        context = context,
+                                        url = urlToDownload,
+                                        filename = nameToDownload,
+                                        folderUriString = savedFolderUri,
+                                        onProgress = { p -> downloadProgress = p }
+                                    )
+
+                                    if (result.isSuccess) {
+                                        downloadProgress = 100
+                                        statusText = "¡Guardado con éxito!"
+                                        Toast.makeText(context, "Descargado con éxito en $savedFolderName", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        statusText = "Error: " + (result.exceptionOrNull()?.message ?: "Descarga fallida")
+                                    }
+                                } catch (ex: Exception) {
+                                    statusText = "Error: ${ex.message}"
+                                } finally {
+                                    isDownloading = false
+                                }
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = VibrantBlueText),
+                        shape = RoundedCornerShape(12.dp),
+                        enabled = !isDownloading && (isCustomMode || (!filesList.isNullOrEmpty()))
+                    ) {
+                        Text("Descargar", color = Color.Black)
+                    }
+                }
+            }
+        }
+    }
+
+    // --- SECONDARY DIALOG FOR PICKING ANY VERSION ---
+    if (showVersionSelectorDialog && !allVersions.isNullOrEmpty()) {
+        VersionSelectorDialog(
+            versions = allVersions ?: emptyList(),
+            selectedVersion = selectedVersion,
+            onVersionSelected = { version ->
+                selectedVersion = version
+                filesList = version.files ?: emptyList()
+                selectedFileIndex = 0
+                if (filesList.isNullOrEmpty()) {
+                    isCustomMode = true
+                    customFilename = "${project.slug}.jar"
+                    customUrl = "https://api.modrinth.com/v2/project/${project.slug}/version"
+                } else {
+                    isCustomMode = false
+                }
+            },
+            onDismiss = { showVersionSelectorDialog = false }
+        )
+    }
+}
+
+@Composable
+fun VersionSelectorDialog(
+    versions: List<VersionResponse>,
+    selectedVersion: VersionResponse?,
+    onVersionSelected: (VersionResponse) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    
+    val filteredVersions = remember(versions, searchQuery) {
+        if (searchQuery.isBlank()) {
+            versions
+        } else {
+            versions.filter { version ->
+                version.name.contains(searchQuery, ignoreCase = true) ||
+                version.versionNumber.contains(searchQuery, ignoreCase = true) ||
+                (version.gameVersions?.any { it.contains(searchQuery, ignoreCase = true) } == true) ||
+                (version.loaders?.any { it.contains(searchQuery, ignoreCase = true) } == true)
+            }
+        }
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
+            shape = RoundedCornerShape(24.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.85f)
+                .padding(12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(20.dp)
+            ) {
+                Text(
+                    text = "Seleccionar Versión",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = VibrantBlueText
+                )
+                Text(
+                    text = "Busca y elige cualquier versión del proyecto",
+                    fontSize = 12.sp,
+                    color = VibrantTextSecondary
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                // Search field
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Buscar por versión, Minecraft, Loader...", fontSize = 12.sp) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = null,
+                            tint = VibrantTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotEmpty()) {
+                            IconButton(onClick = { searchQuery = "" }) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = "Limpiar",
+                                    tint = VibrantTextSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = VibrantBlueText,
+                        unfocusedBorderColor = VibrantGrayBorder,
+                        focusedTextColor = VibrantTextPrimary,
+                        unfocusedTextColor = VibrantTextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                if (filteredVersions.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No se encontraron versiones coincidentes.",
+                            fontSize = 13.sp,
+                            color = VibrantTextSecondary,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        items(filteredVersions) { version ->
+                            val isSelected = version.id == selectedVersion?.id
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        onVersionSelected(version)
+                                        onDismiss()
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) VibrantBlueContainer else VibrantBg
+                                ),
+                                shape = RoundedCornerShape(14.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isSelected) VibrantBlueText.copy(alpha = 0.4f) else Color.Transparent
+                                )
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = version.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 13.sp,
+                                            color = VibrantTextPrimary,
+                                            modifier = Modifier.weight(1f),
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        
+                                        val badgeColor = when ((version.versionType ?: "release").lowercase()) {
+                                            "release" -> Color(0xFF10B981)
+                                            "beta" -> Color(0xFFF59E0B)
+                                            "alpha" -> Color(0xFFEF4444)
+                                            else -> VibrantTextSecondary
+                                        }
+                                        Surface(
+                                            color = badgeColor.copy(alpha = 0.15f),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Text(
+                                                text = (version.versionType ?: "release").uppercase(),
+                                                color = badgeColor,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
+                                    
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = "v${version.versionNumber}",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = VibrantTextSecondary
+                                        )
+                                        Text(
+                                            text = formatPublishDate(version.datePublished),
+                                            fontSize = 10.sp,
+                                            color = VibrantTextSecondary.copy(alpha = 0.8f)
+                                        )
+                                    }
+                                    
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        if (!version.loaders.isNullOrEmpty()) {
+                                            Surface(
+                                                color = VibrantBlueText.copy(alpha = 0.08f),
+                                                shape = RoundedCornerShape(4.dp)
+                                            ) {
+                                                Text(
+                                                    text = version.loaders.joinToString(", ").uppercase(),
+                                                    color = VibrantBlueText,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = "• Minecraft " + (version.gameVersions?.joinToString(", ") ?: ""),
+                                            color = VibrantTextSecondary,
+                                            fontSize = 10.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(12.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Cerrar", color = VibrantBlueText, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Format ISO dateStr (e.g. "2023-05-24T18:02:11.123Z") to "24/05/2023"
+fun formatPublishDate(dateStr: String?): String {
+    if (dateStr == null) return ""
+    return try {
+        val date = dateStr.substringBefore('T')
+        val parts = date.split('-')
+        if (parts.size == 3) {
+            "${parts[2]}/${parts[1]}/${parts[0]}"
+        } else {
+            date
+        }
+    } catch (e: Exception) {
+        dateStr
     }
 }

@@ -13,15 +13,15 @@ import androidx.compose.ui.platform.LocalContext
 
 private val DarkColorScheme =
   darkColorScheme(
-    primary = VibrantBlueContainer,
-    secondary = VibrantBlueText,
+    primary = VibrantBlueText,
+    secondary = VibrantBlueContainer,
     tertiary = VibrantEmeraldGreen,
-    background = Color(0xFF0F172A),
-    surface = Color(0xFF1E293B),
-    onPrimary = VibrantBlueText,
+    background = VibrantBg,
+    surface = VibrantNeutralCard,
+    onPrimary = Color.Black,
     onSecondary = Color.White,
-    onBackground = Color.White,
-    onSurface = Color.White
+    onBackground = VibrantTextPrimary,
+    onSurface = VibrantTextPrimary
   )
 
 private val LightColorScheme =
@@ -30,11 +30,11 @@ private val LightColorScheme =
     secondary = VibrantBlueContainer,
     tertiary = VibrantEmeraldGreen,
     background = VibrantBg,
-    surface = Color.White,
-    onPrimary = Color.White,
-    onSecondary = VibrantBlueText,
+    surface = VibrantNeutralCard,
+    onPrimary = Color.Black,
+    onSecondary = Color.White,
     onBackground = VibrantTextPrimary,
-    onSurface = VibrantTextPrimary,
+    onSurface = VibrantTextPrimary
   )
 
 @Composable

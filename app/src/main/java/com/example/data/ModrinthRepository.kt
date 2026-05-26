@@ -44,8 +44,8 @@ class ModrinthRepository(
 
             // If we have a latest version, save it in the history log so the feed has content
             if (latestVersion != null) {
-                val gameVersions = latestVersion.gameVersions.joinToString(", ")
-                val loaders = latestVersion.loaders.joinToString(", ")
+                val gameVersions = latestVersion.gameVersions?.joinToString(", ") ?: ""
+                val loaders = latestVersion.loaders?.joinToString(", ") ?: ""
                 modrinthDao.insertNotification(
                     UpdateNotificationEntity(
                         projectSlug = entity.slug,
@@ -53,8 +53,8 @@ class ModrinthRepository(
                         versionId = latestVersion.id,
                         versionNumber = latestVersion.versionNumber,
                         versionName = latestVersion.name,
-                        releaseType = latestVersion.versionType,
-                        datePublished = latestVersion.datePublished,
+                        releaseType = latestVersion.versionType ?: "release",
+                        datePublished = latestVersion.datePublished ?: "",
                         changelog = latestVersion.changelog,
                         notifiedAt = System.currentTimeMillis(),
                         isRead = false,
@@ -123,8 +123,8 @@ class ModrinthRepository(
             modrinthDao.insertProject(updatedEntity)
 
             if (isNewVersion || isFirstFetch) {
-                val gameVersions = latestVersion.gameVersions.joinToString(", ")
-                val loaders = latestVersion.loaders.joinToString(", ")
+                val gameVersions = latestVersion.gameVersions?.joinToString(", ") ?: ""
+                val loaders = latestVersion.loaders?.joinToString(", ") ?: ""
                 
                 modrinthDao.insertNotification(
                     UpdateNotificationEntity(
@@ -133,8 +133,8 @@ class ModrinthRepository(
                         versionId = latestVersion.id,
                         versionNumber = latestVersion.versionNumber,
                         versionName = latestVersion.name,
-                        releaseType = latestVersion.versionType,
-                        datePublished = latestVersion.datePublished,
+                        releaseType = latestVersion.versionType ?: "release",
+                        datePublished = latestVersion.datePublished ?: "",
                         changelog = latestVersion.changelog,
                         notifiedAt = System.currentTimeMillis(),
                         isRead = false,

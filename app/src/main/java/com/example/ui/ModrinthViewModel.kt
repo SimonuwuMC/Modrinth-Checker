@@ -20,6 +20,8 @@ import com.example.data.*
 import com.example.worker.ModrinthUpdateWorker
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
 
 data class ModrinthUiState(
@@ -217,44 +219,60 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(errorMessage = null) }
     }
 
-    // Developer Test: simulate version update to verify notification flow
-    fun simulateVersionUpdate(slug: String) {
-        viewModelScope.launch {
-            val project = _uiState.value.projects.firstOrNull { it.slug == slug } ?: return@launch
-            
-            val currentVersionNumber = project.lastVersionNumber ?: "1.0.0"
-            // Increment the version number for simulation
-            val nextVersion = try {
-                val parts = currentVersionNumber.split(".")
-                if (parts.size >= 3) {
-                    val patch = parts[2].toIntOrNull() ?: 0
-                    "${parts[0]}.${parts[1]}.${patch + 1}"
-                } else {
-                    "$currentVersionNumber.1"
-                }
-            } catch (e: Exception) {
-                "$currentVersionNumber-sim"
-            }
+    // Storage and utility functions for user-selected local Download folders (Containers)
+    fun getSavedFolderUri(): String? {
+        return sharedPrefs.getString("saved_download_folder_uri", null)
+    }
 
-            val mockChangelog = """
-                # Simulación de Actualización para ${project.title}
-                
-                ¡Esta es una actualización simulada en vivo para probar el sistema de notificaciones!
-                
-                ## Novedades:
-                * Agregada compatibilidad de ejemplo con la última actualización.
-                * Corrección automática de renderizado de texturas de prueba.
-                * Optimización de rendimiento y FPS en Pojav.
-                
-                *Disparado por simulación local de prueba.*
-            """.trimIndent()
+    fun getSavedFolderName(): String? {
+        return sharedPrefs.getString("saved_download_folder_name", null)
+    }
 
-            repository.simulateMockUpdate(slug, nextVersion, mockChangelog)
-            triggerSystemNotification(project.title, nextVersion)
-            
-            _uiState.update { 
-                it.copy(successMessage = "¡Actualización simulada para ${project.title}! Revisa las notificaciones del sistema.")
-            }
+    fun saveFolder(uriStr: String, name: String) {
+        sharedPrefs.edit()
+            .putString("saved_download_folder_uri", uriStr)
+            .putString("saved_download_folder_name", name)
+            .apply()
+    }
+
+    fun clearSavedFolder() {
+        sharedPrefs.edit()
+            .remove("saved_download_folder_uri")
+            .remove("saved_download_folder_name")
+            .apply()
+    }
+
+    // Retrieve downloadable files for a project's latest version from Modrinth API
+    suspend fun fetchLatestVersionFiles(slug: String): List<VersionFile> = withContext(Dispatchers.IO) {
+        try {
+            val versions = apiService.getProjectVersions(slug)
+            val latest = versions.firstOrNull()
+            latest?.files ?: emptyList()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching version files for $slug", e)
+            emptyList()
+        }
+    }
+
+    // Retrieve all downloadable versions for a project from Modrinth API
+    suspend fun fetchAllVersions(slug: String): List<VersionResponse> = withContext(Dispatchers.IO) {
+        try {
+            apiService.getProjectVersions(slug)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching all versions for $slug", e)
+            emptyList()
+        }
+    }
+
+    // Search Modrinth projects in real-time
+    suspend fun searchProjects(query: String): List<SearchHit> = withContext(Dispatchers.IO) {
+        if (query.isBlank()) return@withContext emptyList()
+        try {
+            val response = apiService.searchProjects(query)
+            response.hits
+        } catch (e: Exception) {
+            Log.e(TAG, "Error searching projects for: $query", e)
+            emptyList()
         }
     }
 

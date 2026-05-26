@@ -6,6 +6,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
 interface ModrinthApiService {
@@ -18,6 +19,12 @@ interface ModrinthApiService {
     suspend fun getProjectVersions(
         @Path("idOrSlug") idOrSlug: String
     ): List<VersionResponse>
+
+    @GET("search")
+    suspend fun searchProjects(
+        @Query("query") query: String,
+        @Query("limit") limit: Int = 20
+    ): SearchResponse
 
     companion object {
         private const val BASE_URL = "https://api.modrinth.com/v2/"
