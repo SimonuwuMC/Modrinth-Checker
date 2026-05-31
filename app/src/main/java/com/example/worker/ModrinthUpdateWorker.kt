@@ -27,7 +27,7 @@ class ModrinthUpdateWorker(
         Log.d(TAG, "Background update check triggered...")
         
         val database = AppDatabase.getDatabase(context)
-        val apiService = ModrinthApiService.create()
+        val apiService = ModrinthApiService.create(context)
         val repository = ModrinthRepository(apiService, database.modrinthDao())
 
         try {

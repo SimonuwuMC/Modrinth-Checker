@@ -156,6 +156,22 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
             .fillMaxSize()
             .testTag("app_scaffold"),
         containerColor = VibrantBg,
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = { showAddDialog = true },
+                containerColor = VibrantBlueText,
+                contentColor = Color.Black,
+                shape = CircleShape,
+                modifier = Modifier
+                    .testTag("fab_add_project")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = "Agregar proyecto",
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+        }
     ) { innerPadding ->
         Column(
             modifier = Modifier
@@ -176,6 +192,10 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
                 PermissionWarningBanner {
                     launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
                 }
+            }
+
+            val projectIconsMap = remember(uiState.projects) {
+                uiState.projects.associate { it.slug to it.iconUrl }
             }
 
             // Central feed area containing tabs or single scroll feed
@@ -262,8 +282,7 @@ fun ModrinthAppScreen(viewModel: ModrinthViewModel) {
                     }
                 } else {
                     items(uiState.notifications, key = { it.id }) { notification ->
-                        val correspondingProject = uiState.projects.firstOrNull { it.slug == notification.projectSlug }
-                        val iconUrl = correspondingProject?.iconUrl
+                        val iconUrl = projectIconsMap[notification.projectSlug]
                         NotificationHistoryCard(
                             notification = notification,
                             iconUrl = iconUrl,
@@ -320,35 +339,30 @@ fun AppHeader(
     isRefreshing: Boolean,
     onAddProjectClick: () -> Unit
 ) {
-    val rotationAngle = remember { Animatable(0f) }
     var showEditNameDialog by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isRefreshing) {
-        if (isRefreshing) {
-            rotationAngle.animateTo(
-                targetValue = 360f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(1200, easing = LinearEasing),
-                    repeatMode = RepeatMode.Restart
-                )
-            )
-        } else {
-            rotationAngle.snapTo(0f)
-        }
-    }
+    var showStorageDialog by remember { mutableStateOf(false) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .padding(16.dp),
-        colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         shape = RoundedCornerShape(24.dp),
         border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
-        elevation = CardDefaults.cardElevation(2.dp)
+        elevation = CardDefaults.cardElevation(4.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            VibrantNeutralCard,
+                            VibrantNeutralCard.copy(alpha = 0.9f),
+                            Color(0xFF0C0D0E)
+                        )
+                    )
+                )
                 .padding(16.dp)
         ) {
             Row(
@@ -356,65 +370,88 @@ fun AppHeader(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Minecraft-Style Emerald Block Visual logo in canvas
-                    Canvas(
+                // Modified with weight to prevent pushing/clipping the right row buttons on compact screens
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Modern, high-performance icon layout (no complex custom canvas shaders)
+                    Box(
                         modifier = Modifier
                             .size(36.dp)
-                            .clip(RoundedCornerShape(6.dp))
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF10B981)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        drawRect(color = Color(0xFF047857)) // Dark emerald border
-                        val blockPixel = size.width / 4
-                        for (i in 0 until 4) {
-                            for (j in 0 until 4) {
-                                if ((i + j) % 2 == 0) {
-                                    drawRect(
-                                        color = Color(0xFF10B981), // Emerald body
-                                        topLeft = androidx.compose.ui.geometry.Offset(i * blockPixel, j * blockPixel),
-                                        size = androidx.compose.ui.geometry.Size(blockPixel, blockPixel)
-                                    )
-                                } else {
-                                    drawRect(
-                                        color = Color(0xFF34D399), // Lite emerald accent
-                                        topLeft = androidx.compose.ui.geometry.Offset(i * blockPixel, j * blockPixel),
-                                        size = androidx.compose.ui.geometry.Size(blockPixel, blockPixel)
-                                    )
-                                }
-                            }
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Favorite,
+                            contentDescription = "Simonuwu Modrinth Logo",
+                            tint = Color.Black,
+                            modifier = Modifier.size(20.dp)
+                        )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
-                    Column {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "Simonuwu Modrinth",
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
-                            color = VibrantTextPrimary
+                            color = VibrantTextPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Text(
                             text = "Checker & Notificador",
                             fontSize = 12.sp,
-                            color = VibrantTextSecondary
+                            color = VibrantTextSecondary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(
+                        onClick = { showStorageDialog = true },
+                        modifier = Modifier
+                            .background(VibrantGrayBorder.copy(alpha = 0.2f), CircleShape)
+                            .size(36.dp)
+                            .testTag("storage_settings_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Almacenamiento y Caché",
+                            tint = VibrantTextPrimary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     IconButton(
                         onClick = onRefreshAll,
+                        enabled = !isRefreshing,
                         modifier = Modifier
                             .background(VibrantBlueContainer, CircleShape)
                             .size(36.dp)
                             .testTag("refresh_all_button")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Sincronizar",
-                            tint = VibrantBlueText,
-                            modifier = Modifier
-                                .size(20.dp)
-                                .rotate(rotationAngle.value)
-                        )
+                        if (isRefreshing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = VibrantBlueText
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Sincronizar",
+                                tint = VibrantBlueText,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     }
                     IconButton(
                         onClick = onAddProjectClick,
@@ -434,10 +471,10 @@ fun AppHeader(
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            HorizontalDivider(color = VibrantGrayBorder, thickness = 1.dp)
+            HorizontalDivider(color = VibrantGrayBorder.copy(alpha = 0.6f), thickness = 1.dp)
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Metadata Row: UTC Clock and Account
+            // Metadata Row: Username (Editable) on right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -526,6 +563,109 @@ fun AppHeader(
             containerColor = VibrantNeutralCard,
             shape = RoundedCornerShape(20.dp)
         )
+    }
+
+    if (showStorageDialog) {
+        StorageCacheDialog(onDismissRequest = { showStorageDialog = false })
+    }
+}
+
+@Composable
+fun StorageCacheDialog(onDismissRequest: () -> Unit) {
+    val context = LocalContext.current
+    var cacheSize by remember { mutableStateOf(com.example.ui.LocalImageCompressor.getCacheSizeString(context)) }
+    
+    Dialog(onDismissRequest = onDismissRequest) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = VibrantNeutralCard),
+            border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
+        ) {
+            Column(
+                modifier = Modifier
+                    .padding(20.dp)
+                    .fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Settings,
+                    contentDescription = "Caché de imágenes",
+                    tint = VibrantBlueText,
+                    modifier = Modifier.size(48.dp)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = "Almacenamiento y Caché",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp,
+                    color = VibrantTextPrimary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "Las imágenes y logos se comprimen inteligentemente al 75% en JPEG para reducir el consumo de internet (ahorros del 90%) y garantizar que sigan disponibles de manera offline.",
+                    fontSize = 13.sp,
+                    color = VibrantTextSecondary,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.LightGray.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        .padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Tamaño actual en disco:",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp,
+                        color = VibrantTextPrimary
+                    )
+                    Text(
+                        text = cacheSize,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = VibrantBlueText
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(20.dp))
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onDismissRequest,
+                        modifier = Modifier.weight(1f),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, VibrantGrayBorder),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = VibrantTextPrimary)
+                    ) {
+                        Text("Cerrar")
+                    }
+                    Button(
+                        onClick = {
+                            com.example.ui.LocalImageCompressor.clearCache(context)
+                            cacheSize = com.example.ui.LocalImageCompressor.getCacheSizeString(context)
+                            Toast.makeText(context, "Caché liberada con éxito", Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = VibrantBlueText,
+                            contentColor = Color.Black
+                        )
+                    ) {
+                        Text("Limpiar", fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -881,10 +1021,18 @@ fun NotificationHistoryCard(
 @Composable
 fun ProjectLogo(iconUrl: String?, projectSlug: String, modifier: Modifier = Modifier) {
     if (!iconUrl.isNullOrEmpty()) {
-        val painter = coil.compose.rememberAsyncImagePainter(model = iconUrl)
+        val compressedImage = com.example.ui.rememberLocalCompressedImage(iconUrl)
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val imageRequest = remember(compressedImage) {
+            coil.request.ImageRequest.Builder(context)
+                .data(compressedImage)
+                .crossfade(true)
+                .build()
+        }
+        val painter = coil.compose.rememberAsyncImagePainter(model = imageRequest)
         val state = painter.state
         Box(
-            modifier = modifier,
+            modifier = modifier.clip(RoundedCornerShape(8.dp)),
             contentAlignment = Alignment.Center
         ) {
             androidx.compose.foundation.Image(
@@ -893,7 +1041,13 @@ fun ProjectLogo(iconUrl: String?, projectSlug: String, modifier: Modifier = Modi
                 modifier = Modifier.fillMaxSize(),
                 contentScale = androidx.compose.ui.layout.ContentScale.Crop
             )
-            if (state is coil.compose.AsyncImagePainter.State.Loading || state is coil.compose.AsyncImagePainter.State.Error) {
+            if (state is coil.compose.AsyncImagePainter.State.Loading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.LightGray.copy(alpha = 0.2f))
+                )
+            } else if (state is coil.compose.AsyncImagePainter.State.Error) {
                 MinecraftAvatar(projectSlug = projectSlug, modifier = Modifier.fillMaxSize())
             }
         }
@@ -904,60 +1058,29 @@ fun ProjectLogo(iconUrl: String?, projectSlug: String, modifier: Modifier = Modi
 
 @Composable
 fun MinecraftAvatar(projectSlug: String, modifier: Modifier = Modifier) {
+    val firstLetter = projectSlug.trim().takeIf { it.isNotEmpty() }?.first()?.uppercaseChar()?.toString() ?: "M"
     val hash = projectSlug.hashCode()
-    val random = remember(projectSlug) { Random(hash.toLong()) }
-    
+    val backgroundColor = remember(projectSlug) {
+        val random = kotlin.random.Random(hash.toLong())
+        val hue = random.nextFloat() * 360f
+        // Beautiful vibrant pastel color palette compatible with the app theme
+        Color.hsv(hue, 0.7f, 0.8f)
+    }
+
     Box(
         modifier = modifier
             .size(44.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(VibrantNeutralCard)
+            .background(backgroundColor),
+        contentAlignment = Alignment.Center
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
-            val pixelGrid = 8
-            val pWidth = size.width / pixelGrid
-            val pHeight = size.height / pixelGrid
-            
-            // Procedural grass/dirt visual background or monster faces
-            val baseHue = random.nextFloat() * 360f
-            val baseSaturation = 0.5f + (random.nextFloat() * 0.4f)
-            val baseValue = 0.4f + (random.nextFloat() * 0.4f)
-            
-            for (x in 0 until pixelGrid) {
-                for (y in 0 until pixelGrid) {
-                    // Create symmetric face-like pattern or random beautiful grid block
-                    val drawX = if (x >= 4) pixelGrid - 1 - x else x
-                    val pixelSalt = (drawX * 3 + y * 7).hashCode().absoluteValue % 100
-                    
-                    val color = if (pixelSalt % 3 == 0) {
-                        Color.hsv(
-                            (baseHue + (pixelSalt % 30) - 15).coerceIn(0f, 360f),
-                            (baseSaturation + 0.1f).coerceIn(0f, 1f),
-                            (baseValue - 0.1f).coerceIn(0f, 1f)
-                        )
-                    } else if (pixelSalt % 3 == 1) {
-                        Color.hsv(
-                            baseHue,
-                            baseSaturation,
-                            baseValue
-                        )
-                    } else {
-                        // Shadow/border accents
-                        Color.hsv(
-                            baseHue,
-                            (baseSaturation - 0.2f).coerceIn(0f, 1f),
-                            (baseValue + 0.2f).coerceIn(0f, 1f)
-                        )
-                    }
-
-                    drawRect(
-                        color = color,
-                        topLeft = androidx.compose.ui.geometry.Offset(x * pWidth, y * pHeight),
-                        size = androidx.compose.ui.geometry.Size(pWidth, pHeight)
-                    )
-                }
-            }
-        }
+        Text(
+            text = firstLetter,
+            color = Color.Black,
+            fontWeight = FontWeight.Bold,
+            fontSize = 18.sp,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
     }
 }
 
@@ -2207,7 +2330,7 @@ fun VersionSelectorDialog(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(vertical = 4.dp)
                     ) {
-                        items(filteredVersions) { version ->
+                        items(filteredVersions, key = { it.id }) { version ->
                             val isSelected = version.id == selectedVersion?.id
                             Card(
                                 modifier = Modifier

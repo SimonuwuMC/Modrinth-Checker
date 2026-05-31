@@ -40,7 +40,7 @@ class ModrinthViewModel(application: Application) : AndroidViewModel(application
     private val KEY_USERNAME = "username"
 
     private val database = AppDatabase.getDatabase(application)
-    private val apiService = ModrinthApiService.create()
+    private val apiService = ModrinthApiService.create(application)
     private val repository = ModrinthRepository(apiService, database.modrinthDao())
 
     private val sharedPrefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

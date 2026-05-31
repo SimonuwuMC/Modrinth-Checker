@@ -31,6 +31,10 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 
+private val IMAGE_LINE_REGEX = """^!\[(.*?)\]\((.*?)\)$""".toRegex()
+private val INLINE_IMAGE_REGEX = """!\[(.*?)\]\((.*?)\)""".toRegex()
+private val INLINE_MARKDOWN_REGEX = """(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`(.+?)`|\[(.+?)\]\((.+?)\)""".toRegex()
+
 sealed class MarkdownBlock {
     data class Heading(val level: Int, val text: String) : MarkdownBlock()
     data class Paragraph(val text: String) : MarkdownBlock()
@@ -79,8 +83,7 @@ fun parseMarkdown(markdown: String): List<MarkdownBlock> {
             }
         }
 
-        val imageRegex = """^!\[(.*?)\]\((.*?)\)$""".toRegex()
-        val match = imageRegex.matchEntire(trimmed)
+        val match = IMAGE_LINE_REGEX.matchEntire(trimmed)
         if (match != null) {
             val alt = match.groupValues[1]
             val url = match.groupValues[2]
@@ -106,9 +109,8 @@ fun parseMarkdown(markdown: String): List<MarkdownBlock> {
 
 fun splitTextAndImages(line: String): List<MarkdownBlock> {
     val result = mutableListOf<MarkdownBlock>()
-    val regex = """!\[(.*?)\]\((.*?)\)""".toRegex()
     var lastIndex = 0
-    val matches = regex.findAll(line)
+    val matches = INLINE_IMAGE_REGEX.findAll(line)
     
     for (match in matches) {
         val range = match.range
@@ -139,10 +141,9 @@ fun splitTextAndImages(line: String): List<MarkdownBlock> {
 
 fun parseInlineMarkdown(text: String, primaryColor: Color): AnnotatedString {
     return buildAnnotatedString {
-        val regex = """(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|`(.+?)`|\[(.+?)\]\((.+?)\)""".toRegex()
         var lastInsertedIndex = 0
         
-        regex.findAll(text).forEach { match ->
+        INLINE_MARKDOWN_REGEX.findAll(text).forEach { match ->
             val start = match.range.first
             val end = match.range.last + 1
             
@@ -228,8 +229,9 @@ fun MarkdownRenderer(
                         else -> 14.sp
                     }
                     val fontWeight = FontWeight.Bold
+                    val annotatedString = remember(block, primaryColor) { parseInlineMarkdown(block.text, primaryColor) }
                     Text(
-                        text = parseInlineMarkdown(block.text, primaryColor),
+                        text = annotatedString,
                         fontSize = fontSize,
                         fontWeight = fontWeight,
                         color = Color(0xFF1E293B),
@@ -237,7 +239,7 @@ fun MarkdownRenderer(
                     )
                 }
                 is MarkdownBlock.Paragraph -> {
-                    val annotatedString = parseInlineMarkdown(block.text, primaryColor)
+                    val annotatedString = remember(block, primaryColor) { parseInlineMarkdown(block.text, primaryColor) }
                     ClickableText(
                         text = annotatedString,
                         style = TextStyle(
@@ -268,7 +270,7 @@ fun MarkdownRenderer(
                             color = primaryColor,
                             modifier = Modifier.padding(end = 8.dp)
                         )
-                        val annotatedString = parseInlineMarkdown(block.text, primaryColor)
+                        val annotatedString = remember(block, primaryColor) { parseInlineMarkdown(block.text, primaryColor) }
                         ClickableText(
                             text = annotatedString,
                             modifier = Modifier.weight(1f),
@@ -316,6 +318,14 @@ fun MarkdownRenderer(
                     )
                 }
                 is MarkdownBlock.Image -> {
+                    val context = LocalContext.current
+                    val compressedImage = rememberLocalCompressedImage(block.url)
+                    val imageRequest = remember(compressedImage) {
+                        ImageRequest.Builder(context)
+                            .data(compressedImage)
+                            .crossfade(true)
+                            .build()
+                    }
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -323,10 +333,7 @@ fun MarkdownRenderer(
                         contentAlignment = Alignment.Center
                     ) {
                         AsyncImage(
-                            model = ImageRequest.Builder(LocalContext.current)
-                                .data(block.url)
-                                .crossfade(true)
-                                .build(),
+                            model = imageRequest,
                             contentDescription = block.alt.takeIf { it.isNotEmpty() } ?: "Imagen de changelog",
                             modifier = Modifier
                                 .fillMaxWidth()
